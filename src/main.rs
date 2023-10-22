@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, fmt::Display};
 use serde::{Deserialize, Deserializer, Serialize};
 use dioxus::prelude::*;
 mod types;
@@ -19,21 +19,21 @@ fn app(cx: Scope) -> Element {
         div {
             style: "text-align: center;",
             h1 { "Craptent" }
-            h3 { "AI Content Pipeline Tool" }
-            p { "Unlock Seamless Integration with Craptent: Your Ultimate AI Content Pipeline and management tool. Effortlessly merge outputs from sources such as ChatGpt, Midjourney, and Elevenlabs into structured data to your frontend with our reliable webhook system." }
-            ApiKey {model:GenModel::ChatGPT}
+            h3 { "Multimedia AI Content Pipeline Tool" }
+            a {href:"https://github.com/sjud/craptent", "Source"}
+            p { "Unlock Seamless Integration with Craptent: Your Ultimate AI Content Pipeline and management tool. Effortlessly merge outputs from sources such as ChatGpt, Dall-E, and Elevenlabs into structured data to your frontend with our reliable webhook system." }
+            ApiKey {model:GenModel::OpenAI}
             ApiKey {model:GenModel::ElevenLabs}
-            ApiKey {model:GenModel::Midjourney}
            p {keys}
            ChatGpt{}
+           DallE{}
         }
 
     ))
 }
 #[derive(Default,Clone,Debug,PartialEq)]
 pub struct ApiKeys{
-    chat_gpt:String,
-    midjourney:String,
+    open_ai:String,
     eleven_labs:String,
 }
 #[derive(Props,PartialEq)]
@@ -42,8 +42,7 @@ struct ApiKeyProps{
 }
 #[derive(Clone,Debug,Copy,PartialEq)]
 pub enum GenModel{
-    ChatGPT,
-    Midjourney,
+    OpenAI,
     ElevenLabs,
 }
 
@@ -51,9 +50,8 @@ fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
     let key = use_state(cx, || "".to_string());
     let title = match cx.props.model {
-        GenModel::ChatGPT => "ChatGPT Key",
-        GenModel::Midjourney => "Midjourney Key",
-        GenModel::ElevenLabs => "Elevenlabs Key",
+        GenModel::OpenAI => "OpenAI Key",
+        GenModel::ElevenLabs => "ElevenLabs Key",
     };
     cx.render(
         rsx!{
@@ -70,8 +68,7 @@ fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
                 onclick : move |_| {
                     let mut current = keys.read().clone();
                     match cx.props.model {
-                    GenModel::ChatGPT => current.chat_gpt = key.get().clone(),
-                    GenModel::Midjourney => current.midjourney = key.get().clone(),
+                    GenModel::OpenAI => current.open_ai = key.get().clone(),
                     GenModel::ElevenLabs => current.eleven_labs = key.get().clone(),
                     }
                     *keys.write() = current;
@@ -192,7 +189,7 @@ fn ChatGpt(cx:Scope) -> Element {
                     value: "{prompt}",
                     oninput: move |evt| prompt.set(evt.value.clone()),
                 },
-            }
+            },
           
            div {
             p {
@@ -294,7 +291,7 @@ fn ChatGpt(cx:Scope) -> Element {
             onclick: move |_| {
                     fetch_chat_gpt(
                         model_resp.clone(),
-                        (*keys).read().chat_gpt.clone(),
+                        (*keys).read().open_ai.clone(),
                         model.current().as_ref().clone(),
                         frequency_penalty.current().as_ref().clone(),
                         max_tokens.current().as_ref().clone(),
@@ -317,4 +314,136 @@ fn ChatGpt(cx:Scope) -> Element {
        }
         }
     )
+}
+
+async fn fetch_dall_e(
+    model_response:UseSharedState<GenerationResponse>,
+    key:String,
+    size:String,
+    batch_size:u8,
+    prompt:String,
+    ) {
+    let resp = reqwest::Client::new()
+        .post("https://api.openai.com/v1/images/generations")
+        .header("Authorization",format!("Bearer {}",key))
+        .header("Content-Type","application/json")
+        .body(format!("{{
+            \"n\":{},
+            \"size\":\"{}\",
+            \"prompt\":\"{}\"
+        }}",
+        batch_size,
+        size,
+        prompt 
+    ))
+    .send()
+    .await
+    .unwrap()
+    .json::<GenerationResponse>()
+    .await
+    .unwrap();
+    *model_response.write() = resp;
+}
+
+
+fn DallE(cx:Scope) -> Element {
+    use_shared_state_provider(cx, || GenerationResponse::default());
+    let model_resp = use_shared_state::<GenerationResponse>(cx).unwrap();
+    let prompt = use_state(cx, || "".to_string());
+    let batch_size = use_state(cx, || 1);
+    let size = use_state(cx, || "256x256".to_string());
+    let keys = use_shared_state::<ApiKeys>(cx).unwrap();
+
+    cx.render(
+        rsx!{
+            div {
+                p {
+                   "Prompt"
+               }
+               input {
+                   value: "{prompt}",
+                   oninput: move |evt| prompt.set(evt.value.clone()),
+               },
+           }
+           div {
+            p {
+               "Batch Size"
+           }
+           input {
+               value: "{batch_size}",
+               oninput: move |evt| batch_size.set(evt.value.clone().parse::<u8>().unwrap_or_default()),
+           },
+        }
+        div {
+            p {
+                "Size"
+            }
+            select {
+                onchange: move |evt| size.set(evt.value.clone()),
+                option {
+                    value: "256x256",
+                    "256x256"
+                },
+                option {
+                    value:"512x512",
+                    "512x512"
+                },
+                option {
+                    value:"1024x1024",
+                    "1024x1024"
+                },  
+            },
+           }
+           div {
+            button{
+                style: "width:6em;height:2em;",
+                onclick: move |_| {
+                        fetch_dall_e(
+                            model_resp.clone(),
+                            (*keys).read().open_ai.clone(),
+                            size.current().as_ref().clone(),
+                            batch_size.current().as_ref().clone(),
+                            prompt.current().as_ref().clone() 
+                        )
+                },
+                "Submit"
+            }
+           }
+           div {
+                (*model_resp.read()).data.iter().map(|img|
+                    {
+                        let url = &img.url;
+                        rsx!(
+                            img { key: "{url}", src: "{url}" }
+                        )
+                    }
+                )
+            }
+        }
+    )
+}
+
+pub async fn fetch_voices(
+    model_response:UseSharedState<VoicesResponse>,
+    key:String
+) {
+    let resp = reqwest::Client::new()
+        .get("https://api.elevenlabs.io/v1/voices")
+        .header("xi-api-key",key)      
+        .send()
+        .await
+        .unwrap()
+        .json::<VoicesResponse>()
+        .await
+        .unwrap();
+    *model_response.write() = resp;
+}
+
+pub fn ElevenLabs(cx:Scope) -> Element {
+    use_shared_state_provider(cx, || GenerationResponse::default());
+    let model_resp = use_shared_state::<GenerationResponse>(cx).unwrap();
+    let keys = use_shared_state::<ApiKeys>(cx).unwrap();
+    cx.render(rsx!{
+
+    })
 }
