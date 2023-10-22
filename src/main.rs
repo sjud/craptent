@@ -1,4 +1,5 @@
-use std::{borrow::Borrow, fmt::Display};
+use bytes::Bytes;
+use gloo::file::ObjectUrl;
 use serde::{Deserialize, Deserializer, Serialize};
 use dioxus::prelude::*;
 mod types;
@@ -27,24 +28,12 @@ fn app(cx: Scope) -> Element {
            p {keys}
            ChatGpt{}
            DallE{}
+           ElevenLabs{}
         }
 
     ))
 }
-#[derive(Default,Clone,Debug,PartialEq)]
-pub struct ApiKeys{
-    open_ai:String,
-    eleven_labs:String,
-}
-#[derive(Props,PartialEq)]
-struct ApiKeyProps{
-    model:GenModel,
-}
-#[derive(Clone,Debug,Copy,PartialEq)]
-pub enum GenModel{
-    OpenAI,
-    ElevenLabs,
-}
+
 
 fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
@@ -171,7 +160,10 @@ fn ChatGpt(cx:Scope) -> Element {
         )
     }
     cx.render(
+
         rsx!{
+            h3{"ChatGPT"}
+
             div {
                 p {
                     "System"
@@ -317,7 +309,7 @@ fn ChatGpt(cx:Scope) -> Element {
 }
 
 async fn fetch_dall_e(
-    model_response:UseSharedState<GenerationResponse>,
+    model_response:UseSharedState<DallEResponse>,
     key:String,
     size:String,
     batch_size:u8,
@@ -339,7 +331,7 @@ async fn fetch_dall_e(
     .send()
     .await
     .unwrap()
-    .json::<GenerationResponse>()
+    .json::<DallEResponse>()
     .await
     .unwrap();
     *model_response.write() = resp;
@@ -347,8 +339,8 @@ async fn fetch_dall_e(
 
 
 fn DallE(cx:Scope) -> Element {
-    use_shared_state_provider(cx, || GenerationResponse::default());
-    let model_resp = use_shared_state::<GenerationResponse>(cx).unwrap();
+    use_shared_state_provider(cx, || DallEResponse::default());
+    let model_resp = use_shared_state::<DallEResponse>(cx).unwrap();
     let prompt = use_state(cx, || "".to_string());
     let batch_size = use_state(cx, || 1);
     let size = use_state(cx, || "256x256".to_string());
@@ -356,6 +348,8 @@ fn DallE(cx:Scope) -> Element {
 
     cx.render(
         rsx!{
+            h3{"Dall-E"}
+
             div {
                 p {
                    "Prompt"
@@ -391,8 +385,8 @@ fn DallE(cx:Scope) -> Element {
                 option {
                     value:"1024x1024",
                     "1024x1024"
-                },  
-            },
+                    },  
+                },
            }
            div {
             button{
@@ -423,27 +417,174 @@ fn DallE(cx:Scope) -> Element {
     )
 }
 
-pub async fn fetch_voices(
-    model_response:UseSharedState<VoicesResponse>,
-    key:String
+pub async fn text_to_audio(
+    model_response:UseSharedState<Vec<ObjectUrl>>,
+    key:String,
+    voice_id:String,
+    text:String,
+    voice_settings:VoiceSettings,
 ) {
-    let resp = reqwest::Client::new()
-        .get("https://api.elevenlabs.io/v1/voices")
-        .header("xi-api-key",key)      
+    let bytes = reqwest::Client::new()
+        .post(&format!("https://api.elevenlabs.io/v1/text-to-speech/{}",voice_id))
+        .header("xi-api-key",key)  
+        .header("Content-Type","application/json")
+        .body(format!("{{
+            \"text\":\"{}\",
+            \"model_id\":\"eleven_multilingual_v1\",
+            \"voice_settings\":{}
+        }}",
+        text,
+        serde_json::to_string(&voice_settings).unwrap(),
+    ))    
         .send()
         .await
         .unwrap()
-        .json::<VoicesResponse>()
+        .bytes()
         .await
         .unwrap();
-    *model_response.write() = resp;
+    let blob = gloo::file::Blob::new_with_options(&*bytes,Some("mpeg/audio"));
+    let object_url = ObjectUrl::from(blob);
+    *model_response.write() = vec![object_url];
 }
 
 pub fn ElevenLabs(cx:Scope) -> Element {
-    use_shared_state_provider(cx, || GenerationResponse::default());
-    let model_resp = use_shared_state::<GenerationResponse>(cx).unwrap();
+    use_shared_state_provider::<Vec<ObjectUrl>>(cx, || vec![]);
+    let model_resp = use_shared_state::<Vec<ObjectUrl>>(cx).unwrap();
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
-    cx.render(rsx!{
+    let similarity_boost = use_state(cx, || 0.70);
+    let stability = use_state(cx, || 0.70);
+    let style = use_state(cx, || 0.20);
+    let use_speaker_boost = use_state(cx, || false);
+    let voice_id = use_state(cx, || "".to_string());
+    let text = use_state(cx,||"".to_string());
+    let future_voices = use_future(cx, (&keys.read().eleven_labs), 
+    |key| async move {
+        if key.is_empty() {
+            None
+        } else {
+            Some(reqwest::Client::new()
+                .get("https://api.elevenlabs.io/v1/voices")
+                .header("xi-api-key",key)      
+                .send()
+                .await
+                .unwrap()
+                .json::<VoicesResponse>()
+                .await
+                .unwrap())
+        }
+    });
 
+    cx.render(rsx!{
+        h3{"ElevenLabs"}
+        match future_voices.value() {
+            Some(resp) => {
+                if let Some(resp) = resp {
+                    rsx!{
+                        select{
+                            onchange: move |evt| voice_id.set(evt.value.clone()),
+                            option{
+                                value:"",
+                                "EMPTY",
+                            } 
+                            resp.voices.iter().map(|voice|
+                                rsx!{
+                                    option{
+                                        value:voice.voice_id.as_str(),
+                                        voice.name.as_str()
+                                    } 
+                                }
+                            )
+                        }
+                        div {
+                            p {
+                               "Stability"
+                           }
+                           input {
+                               value: "{stability}",
+                               oninput: move |evt| stability.set(evt.value.clone().parse::<f64>().unwrap_or_default().max(0.).min(1.)),
+                           },
+                        }
+                        div {
+                            p {
+                               "Similarity"
+                           }
+                           input {
+                               value: "{similarity_boost}",
+                               oninput: move |evt| similarity_boost.set(evt.value.clone().parse::<f64>().unwrap_or_default().max(0.).min(1.)),
+                           },
+                        }
+                        div {
+                            p {
+                               "Style"
+                           }
+                           input {
+                               value: "{style}",
+                               oninput: move |evt| style.set(evt.value.clone().parse::<f64>().unwrap_or_default().max(0.).min(1.)),
+                           },
+                        }
+                        div {
+                            p {
+                               "Speaker Boost"
+                           }
+                           input {
+                               r#type:"checkbox",
+                               onchange: move |_| use_speaker_boost.set(!use_speaker_boost.current().as_ref()),
+                           },
+                        }
+                        div {
+                            p {
+                               "Text"
+                            }
+                           input {
+                                value: "{text}",
+                                oninput: move |evt| text.set(evt.value.clone()),
+                            },
+                        }
+                        div {
+                            button{
+                                style: "width:6em;height:2em;",
+                                onclick: move |_| {
+                                        text_to_audio(
+                                            model_resp.clone(),
+                                            (*keys).read().eleven_labs.clone(),
+                                            voice_id.current().as_ref().clone(),
+                                            text.current().as_ref().clone(),
+                                            VoiceSettings { 
+                                                similarity_boost: similarity_boost.current().as_ref().clone(), 
+                                                stability: stability.current().as_ref().clone(),
+                                                 style: style.current().as_ref().clone(), 
+                                                 use_speaker_boost: use_speaker_boost.current().as_ref().clone(), 
+                                                }
+                                        )
+                                },
+                                "Submit"
+                            }
+                       }
+                       (*model_resp.read()).iter().map(|obj|
+                        {
+                            let obj = obj.clone();
+                            let url = obj.parse::<String>().unwrap();
+                            rsx!(
+                                audio { key: "{url}", src: "{url}", controls: true }
+                            )
+                        }
+                    )
+                    }
+                } else {
+                    rsx!{
+                        p {
+                            "Set your ElevenLabs Key to get your voices."
+                        }
+                    }
+                }
+            },
+            None => {
+                rsx!{
+                    p {
+                        "Set your ElevenLabs Key to get your voices."
+                    }
+                }
+            }
+        }
     })
 }

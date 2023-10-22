@@ -2,6 +2,21 @@ use std::collections::HashMap;
 
 use super::*;
 
+#[derive(Default,Clone,Debug,PartialEq)]
+pub struct ApiKeys{
+    pub open_ai:String,
+    pub eleven_labs:String,
+}
+#[derive(Props,PartialEq)]
+pub struct ApiKeyProps{
+    pub model:GenModel,
+}
+#[derive(Clone,Debug,Copy,PartialEq)]
+pub enum GenModel{
+    OpenAI,
+    ElevenLabs,
+}
+
 fn deserialize_maybe_null<'de, D>(deserializer: D) -> Result<String, D::Error>
     where D: Deserializer<'de> {
     let buf = Option::<String>::deserialize(deserializer)?;
@@ -79,7 +94,7 @@ pub struct TokenUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Deserialize,Default)]
-pub struct GenerationResponse{
+pub struct DallEResponse{
     /// Unix seconds timestamp of when the response was created
     #[serde(rename = "created")]
     pub created_timestamp: Option<u64>,
@@ -92,10 +107,12 @@ pub struct ImageObject{
     pub url:String,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, )]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]
 pub struct VoicesResponse{
-    voices:Vec<Voice>,
+    pub voices:Vec<Voice>,
 }
+
+
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, )]
 pub struct Voice {
@@ -112,10 +129,10 @@ pub struct Voice {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct VoiceSample {
     pub sample_id: String,
-    file_name: String,
-    mime_type: String,
-    size_bytes: Option<i64>,
-    hash: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size_bytes: Option<i64>,
+    pub hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
