@@ -8,9 +8,10 @@ edition = "2021"
 [dependencies]
 dioxus = "0.4.0"
 dioxus-web = "0.4.0"
-reqwest = "0.11.22"
+reqwest = {version="0.11.22",features=["json"]}
 log = "0.4.6"
-
+serde_json = "1.0.107"
+serde = "1.0.189"
 # WebAssembly Debug
 wasm-logger = "0.2.0"
 console_error_panic_hook = "0.1.7"
