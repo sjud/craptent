@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use csv::StringRecord;
 use gloo::file::ObjectUrl;
 use serde::{Deserialize, Deserializer, Serialize};
 use dioxus::prelude::*;
@@ -14,8 +15,12 @@ fn main() {
 
 fn app(cx: Scope) -> Element {
     use_shared_state_provider(cx, || ApiKeys::default());
-    let keys = 
-        format!("{:?}",use_shared_state::<ApiKeys>(cx).unwrap().read().clone());
+    let keys = format!("{:?}",use_shared_state::<ApiKeys>(cx).unwrap().read().clone());
+    let files_uploaded: &UseRef<Vec<String>> = use_ref(cx, Vec::new);
+    let json = use_state(cx, || "{}".to_string());
+    let records = use_ref(cx, ||None);
+    use_shared_state_provider::<AppState>(cx, || AppState::default());
+    let app_state = use_shared_state::<AppState>(cx).unwrap();
     cx.render(rsx! (
         div {
             style: "text-align: center;",
@@ -26,11 +31,57 @@ fn app(cx: Scope) -> Element {
             ApiKey {model:GenModel::OpenAI}
             ApiKey {model:GenModel::ElevenLabs}
            p {keys}
+           h5 {"Upload CSV"}
+           input {
+            // tell the input to pick a file
+            r#type:"file",
+            // list the accepted extensions
+            accept: ".csv",
+            // pick multiple files
+            multiple: true,
+            onchange: |evt| {
+                to_owned![files_uploaded,records];
+            async move {
+                if let Some(file_engine) = &evt.files {
+                    let files = file_engine.files();
+                    for file_name in &files {
+                        // Make sure to use async/await when doing heavy I/O operations,
+                        // to not freeze the interface in the meantime
+                        if let Some(file) = file_engine.read_file_to_string(file_name).await{
+                            let mut rdr = csv::Reader::from_reader(file.as_bytes());
+                            let r = rdr.into_records();
+                            let mut res = vec![];
+                            for rec in r {
+                                res.push(rec.unwrap())
+                            }
+                            *records.write() = Some(res.into_iter());
+                            files_uploaded.write().push(file);
+                        }
+                    }
+                }
+            }
+            }
+            }
+            h5 {"Json"}
+            textarea {
+                value: "{json}",
+                oninput: move |evt| json.set(evt.value.clone()),
+            }
+            p {format!("{:?}",app_state.read().current_record)}
+            button{
+                onclick: move |_| {
+                    if let Some(records) = records.write().as_mut() {
+                        if let Some(record) = records.next() {
+                            app_state.write().update_current_record(record.clone());
+                        }
+                    }
+                },
+                "next"
+            }
            ChatGpt{}
            DallE{}
            ElevenLabs{}
         }
-
     ))
 }
 
@@ -126,10 +177,9 @@ async fn fetch_chat_gpt(
 
 fn ChatGpt(cx:Scope) -> Element {
     use_shared_state_provider(cx, || CompletionResponse::default());
+    let app_state = use_shared_state::<AppState>(cx).unwrap();
     let model_resp = use_shared_state::<CompletionResponse>(cx).unwrap();
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
-    let system = use_state(cx, || "".to_string());
-    let prompt = use_state(cx, || "".to_string());
     let batch_size = use_state(cx, || 1);
     let temperature = use_state(cx, || 1.);
     let max_tokens = use_state(cx, || 256);
@@ -168,21 +218,27 @@ fn ChatGpt(cx:Scope) -> Element {
                 p {
                     "System"
                 }
-                input {
-                    value: "{system}",
-                    oninput: move |evt| system.set(evt.value.clone()),
+                textarea {
+                    value: "{app_state.read().chat_gpt_system_raw}",
+                    oninput: move |evt| app_state.write().update_field(AppStateFieldUpdate::ChatGPTSystem(evt.value.clone())),
                 },
+                p {
+                    "{app_state.read().chat_gpt_system_edited}"
+                }
             },
             div {
                  p {
                     "Prompt"
                 }
-                input {
-                    value: "{prompt}",
-                    oninput: move |evt| prompt.set(evt.value.clone()),
+                textarea {
+                    value: "{app_state.read().chat_gpt_prompt_raw}",
+                    oninput: move |evt| app_state.write().update_field(AppStateFieldUpdate::ChatGPTPrompt(evt.value.clone())),
                 },
+                p {
+                    "{app_state.read().chat_gpt_prompt_edited}"
+                }
             },
-          
+            
            div {
             p {
                 "Model"
@@ -292,22 +348,38 @@ fn ChatGpt(cx:Scope) -> Element {
                         stop_sequence.current().as_ref().clone(),
                         temperature.current().as_ref().clone(),
                         top_p.current().as_ref().clone(),
-                        system.current().as_ref().clone(),
-                        prompt.current().as_ref().clone() 
+                        app_state.read().chat_gpt_system_edited.clone(),
+                        app_state.read().chat_gpt_prompt_edited.clone(),
                     )
             },
             "Submit"
         }
        }
        div {
-            p {
-                format!("{:?}",(*model_resp.read()).message_choices)
-            }
+        if (*model_resp.read()) != CompletionResponse::default() {
+            rsx!(MessageChoices{
+                choices:(*model_resp.read()).message_choices.clone()
+            })
+        }
+
        }
         }
     )
 }
 
+fn MessageChoices(cx:Scope<MessageChoicesProps>) -> Element {
+    cx.render(rsx!(
+        for choice in &cx.props.choices {
+            p{
+                "{choice.message.content.clone()}"
+            }
+            button{
+                style:"width:10em;height:2em;",
+                "add to field"
+            }
+        }
+    ))
+}
 async fn fetch_dall_e(
     model_response:UseSharedState<DallEResponse>,
     key:String,
@@ -340,6 +412,7 @@ async fn fetch_dall_e(
 
 fn DallE(cx:Scope) -> Element {
     use_shared_state_provider(cx, || DallEResponse::default());
+    let app_state = use_shared_state::<AppState>(cx).unwrap();
     let model_resp = use_shared_state::<DallEResponse>(cx).unwrap();
     let prompt = use_state(cx, || "".to_string());
     let batch_size = use_state(cx, || 1);
@@ -354,10 +427,10 @@ fn DallE(cx:Scope) -> Element {
                 p {
                    "Prompt"
                }
-               input {
+               textarea {
                    value: "{prompt}",
-                   oninput: move |evt| prompt.set(evt.value.clone()),
-               },
+                   oninput: move |evt| app_state.write().update_field(AppStateFieldUpdate::DallE(evt.value.clone())),
+                },
            }
            div {
             p {
@@ -449,6 +522,7 @@ pub async fn text_to_audio(
 
 pub fn ElevenLabs(cx:Scope) -> Element {
     use_shared_state_provider::<Vec<ObjectUrl>>(cx, || vec![]);
+    let app_state = use_shared_state::<AppState>(cx).unwrap();
     let model_resp = use_shared_state::<Vec<ObjectUrl>>(cx).unwrap();
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
     let similarity_boost = use_state(cx, || 0.70);
@@ -456,7 +530,6 @@ pub fn ElevenLabs(cx:Scope) -> Element {
     let style = use_state(cx, || 0.20);
     let use_speaker_boost = use_state(cx, || false);
     let voice_id = use_state(cx, || "".to_string());
-    let text = use_state(cx,||"".to_string());
     let future_voices = use_future(cx, (&keys.read().eleven_labs), 
     |key| async move {
         if key.is_empty() {
@@ -535,10 +608,13 @@ pub fn ElevenLabs(cx:Scope) -> Element {
                             p {
                                "Text"
                             }
-                           input {
-                                value: "{text}",
-                                oninput: move |evt| text.set(evt.value.clone()),
+                            textarea {
+                                value: "{app_state.read().eleven_labs_raw}",
+                                oninput: move |evt| app_state.write().update_field(AppStateFieldUpdate::ElevenLabs(evt.value.clone())),
                             },
+                            p {
+                                "{app_state.read().eleven_labs_edited}"
+                            }
                         }
                         div {
                             button{
@@ -548,7 +624,7 @@ pub fn ElevenLabs(cx:Scope) -> Element {
                                             model_resp.clone(),
                                             (*keys).read().eleven_labs.clone(),
                                             voice_id.current().as_ref().clone(),
-                                            text.current().as_ref().clone(),
+                                            app_state.read().dall_e_edited.clone(),
                                             VoiceSettings { 
                                                 similarity_boost: similarity_boost.current().as_ref().clone(), 
                                                 stability: stability.current().as_ref().clone(),

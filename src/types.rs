@@ -2,6 +2,62 @@ use std::collections::HashMap;
 
 use super::*;
 
+#[derive(Props,PartialEq)]
+pub struct MessageChoicesProps{
+  pub choices:Vec<MessageChoice>,
+}
+#[derive(Debug,Clone,PartialEq,Default)]
+pub struct AppState{
+  pub current_record:Option<StringRecord>,
+  pub chat_gpt_system_raw:String,
+  pub chat_gpt_system_edited:String,
+  pub chat_gpt_prompt_raw:String,
+  pub chat_gpt_prompt_edited:String,
+  pub dall_e_raw:String,
+  pub dall_e_edited:String,
+  pub eleven_labs_raw:String,
+  pub eleven_labs_edited:String,
+}
+pub enum AppStateFieldUpdate{
+  ChatGPTSystem(String),
+  ChatGPTPrompt(String),
+  DallE(String),
+  ElevenLabs(String),
+}
+impl AppState{
+  pub fn update_field(&mut self, update:AppStateFieldUpdate) {
+    match update {
+        AppStateFieldUpdate::ChatGPTSystem(s) => self.chat_gpt_system_raw=s,
+        AppStateFieldUpdate::ChatGPTPrompt(s) => self.chat_gpt_prompt_raw=s,
+        AppStateFieldUpdate::DallE(s) => self.dall_e_raw=s,
+        AppStateFieldUpdate::ElevenLabs(s) => self.eleven_labs_raw=s,
+    }
+    if let Some(current_record) = &self.current_record {
+      self.update_current_record(current_record.clone());
+    }
+  }
+  pub fn update_current_record(&mut self, record:StringRecord) {
+    let mut i = 0;
+    let mut chat_gpt_system_edited = self.chat_gpt_system_raw.clone();
+    let mut chat_gpt_prompt_edited = self.chat_gpt_prompt_raw.clone();
+    let mut dall_e_edited = self.dall_e_raw.clone();
+    let mut eleven_labs_edited = self.eleven_labs_raw.clone();
+    while record.get(i).is_some() {
+      let s = record.get(i).unwrap();
+      chat_gpt_system_edited = chat_gpt_system_edited.replace(&format!("{{{}}}",i),s);
+      chat_gpt_prompt_edited = chat_gpt_prompt_edited.replace(&format!("{{{}}}",i),s);
+      eleven_labs_edited = eleven_labs_edited.replace(&format!("{{{}}}",i),s);
+      dall_e_edited = dall_e_edited.replace(&format!("{{{}}}",i),s);
+      i+=1;
+    }
+    self.chat_gpt_system_edited = chat_gpt_system_edited;
+    self.chat_gpt_prompt_edited = chat_gpt_prompt_edited;
+    self.eleven_labs_edited = eleven_labs_edited;
+    self.dall_e_edited = dall_e_edited;
+    self.current_record=Some(record);
+  }
+}
+
 #[derive(Default,Clone,Debug,PartialEq)]
 pub struct ApiKeys{
     pub open_ai:String,
