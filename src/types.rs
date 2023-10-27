@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-
 use super::*;
+
+
 
 #[derive(Props,PartialEq)]
 pub struct MessageChoicesProps{
@@ -34,6 +35,11 @@ impl AppState{
     }
     if let Some(current_record) = &self.current_record {
       self.update_current_record(current_record.clone());
+    } else {
+      self.chat_gpt_system_edited = self.chat_gpt_system_raw.clone();
+      self.chat_gpt_prompt_edited = self.chat_gpt_prompt_raw.clone();
+      self.eleven_labs_edited = self.eleven_labs_raw.clone();
+      self.dall_e_edited = self.dall_e_raw.clone();
     }
   }
   pub fn update_current_record(&mut self, record:StringRecord) {

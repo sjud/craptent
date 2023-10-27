@@ -2,7 +2,7 @@ use bytes::Bytes;
 use csv::StringRecord;
 use gloo::file::ObjectUrl;
 use serde::{Deserialize, Deserializer, Serialize};
-use dioxus::prelude::*;
+use dioxus::{prelude::*, core::IntoDynNode};
 mod types;
 use types::*;
 fn main() {
@@ -14,6 +14,7 @@ fn main() {
 }
 
 fn app(cx: Scope) -> Element {
+    use_shared_state_provider(cx, || serde_json::Map::from_iter(vec![(String::new(),serde_json::Value::Object(serde_json::Map::default()))].into_iter()));
     use_shared_state_provider(cx, || ApiKeys::default());
     let keys = format!("{:?}",use_shared_state::<ApiKeys>(cx).unwrap().read().clone());
     let files_uploaded: &UseRef<Vec<String>> = use_ref(cx, Vec::new);
@@ -62,11 +63,8 @@ fn app(cx: Scope) -> Element {
             }
             }
             }
-            h5 {"Json"}
-            textarea {
-                value: "{json}",
-                oninput: move |evt| json.set(evt.value.clone()),
-            }
+            h5 {"Build Json Structure"}
+            BuildJsonStructure{}
             p {format!("{:?}",app_state.read().current_record)}
             button{
                 onclick: move |_| {
@@ -85,6 +83,126 @@ fn app(cx: Scope) -> Element {
     ))
 }
 
+fn recursive_obj_search(
+    map: &mut dyn Iterator<Item=(&String, &serde_json::Value)>, 
+    list: &mut Vec<LazyNodes>, 
+    path: Vec<String>,
+) {
+    while let Some((field, value)) = map.next() {
+        if value.is_object() {
+            let mut new_path = path.clone();
+            new_path.push(field.clone());
+            // Assuming you have an rsx! macro and BuildJsonObject struct defined somewhere
+            let new_path_clone = new_path.clone();
+            list.push(rsx!{
+                BuildJsonObject{
+                    path: new_path_clone
+                }
+            });
+            recursive_obj_search(&mut value.as_object().unwrap().into_iter(), list,new_path);
+        }
+    }
+}
+fn BuildJsonStructure(cx:Scope) -> Element {
+    let map = use_shared_state::<serde_json::Map<String,serde_json::Value>>(cx).unwrap();
+    let mut add_list = vec![];
+    let mut path = vec![];
+    recursive_obj_search(&mut map.read().iter(),&mut add_list,path);
+    cx.render(rsx!{
+        p{
+            "{serde_json::to_string(&*map.read().get(\"\").unwrap()).unwrap()}"
+        }
+        add_list.into_iter()
+    })
+}
+
+#[derive(Props,PartialEq)]
+pub struct BuildJsonObjectProps{
+    path:Vec<String>,
+}
+
+fn BuildJsonObject(cx:Scope<BuildJsonObjectProps>) -> Element {
+    use serde_json::Value;
+    let map = use_shared_state::<serde_json::Map<String,Value>>(cx).unwrap();
+    let field_name = use_state(cx, || "".to_string());
+    let value = use_state(cx,||"bool".to_string());
+    let with = use_state(cx,||"".to_string());
+    let obj_name = cx.props.path.join(".");
+    cx.render(rsx!{
+        p{ "Add Field to {obj_name}" }
+        input{
+            oninput: move |evt| field_name.set(evt.value.clone()),
+        }
+        span{"Value:"}
+        select{
+            onchange: move |evt| value.set(evt.value.clone()),
+            option {
+                value:"bool",
+                "Bool"
+            },
+            option {
+                value:"number",
+                "Number"
+            },
+            option {
+                value: "string",
+                "String"
+            },
+            option {
+                value:"array-bool",
+                "ArrayBool"
+            },
+            option {
+                value:"array-number",
+                "ArrayNumber"
+            },
+            option {
+                value:"array-string",
+                "ArrayString"
+            },
+            option {
+                value: "object",
+                "object"
+            },
+        },
+        span{"With:"}
+        input{
+            oninput: move |evt| with.set(evt.value.clone()),
+        }
+        button{
+            onclick:move |_| {
+                let field_name = field_name.current().as_ref().clone();
+                let value = match value.current().as_ref().clone().as_str() {
+                    "bool" => serde_json::Value::Bool(with.current().as_ref().clone().parse::<bool>().unwrap_or_default()),
+                    "number" => serde_json::Value::Number(serde_json::Number::from_f64(with.current().as_ref().clone().parse::<f64>().unwrap_or_default()).unwrap()),
+                    "string" => serde_json::Value::String(with.current().as_ref().clone().parse::<String>().unwrap_or_default()),
+                    "array-bool" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|Value::Bool(s.parse::<bool>().unwrap_or_default())).collect::<Vec<Value>>()),
+                    "array-number" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|
+                        Value::Number(serde_json::Number::from_f64(s.parse::<f64>().unwrap_or_default()).unwrap()
+                        )).collect::<Vec<serde_json::Value>>()),
+                    "array-string" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|Value::String(s.to_string())).collect::<Vec<Value>>()),
+                    "object" => serde_json::Value::Object(serde_json::Map::<String,serde_json::Value>::default()),
+                    _ => panic!("unexpected value for value"),
+                };
+                let mut map = map.write();
+                let mut map = map.get_mut(&cx.props.path[0]).unwrap();
+                let mut i = 1; 
+                    while cx.props.path.get(i).is_some() {
+                        map = map.get_mut(&cx.props.path[i]).unwrap();
+                        i+=1;
+                    }
+                    if let serde_json::Value::Object(map) = map {
+                        map.insert(field_name,value);
+                    } else {
+                        panic!("expected path to resolve to a map");
+                    }
+            },
+            style:"width:3em;height:2em;",
+            "Add"
+        }
+        }
+    )
+}
 
 fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
@@ -367,13 +485,36 @@ fn ChatGpt(cx:Scope) -> Element {
     )
 }
 
+
 fn MessageChoices(cx:Scope<MessageChoicesProps>) -> Element {
+    use serde_json::Value;
+    let map = use_shared_state::<serde_json::Map<String,Value>>(cx).unwrap();
+    let path = use_state(cx, || "".to_string());
     cx.render(rsx!(
         for choice in &cx.props.choices {
             p{
                 "{choice.message.content.clone()}"
             }
+            input{
+                value:"{path}",
+                oninput: move |evt| path.set(evt.value.clone())
+            }
             button{
+                onclick: move |_| {
+                    let mut map_c = map.read().clone();
+                    let mut temp = map_c.get_mut("").unwrap().as_object_mut().unwrap();
+                    for p in path.current().split(".") {
+                        let new_temp = temp.get_mut(p).unwrap();
+                        if new_temp.is_string() {
+                            log::error!("is string");
+                            *new_temp = Value::String(choice.message.content.clone());
+                            break;
+                        }
+                        temp = new_temp.as_object_mut().unwrap();
+                       
+                    }
+                    *map.write() = map_c;
+                },
                 style:"width:10em;height:2em;",
                 "add to field"
             }
