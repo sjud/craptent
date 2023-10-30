@@ -16,11 +16,11 @@ fn main() {
 fn app(cx: Scope) -> Element {
     use_shared_state_provider(cx, || serde_json::Map::from_iter(vec![(String::new(),serde_json::Value::Object(serde_json::Map::default()))].into_iter()));
     use_shared_state_provider(cx, || ApiKeys::default());
+    use_shared_state_provider::<AppState>(cx, || AppState::default());
     let keys = format!("{:?}",use_shared_state::<ApiKeys>(cx).unwrap().read().clone());
     let files_uploaded: &UseRef<Vec<String>> = use_ref(cx, Vec::new);
     let json = use_state(cx, || "{}".to_string());
     let records = use_ref(cx, ||None);
-    use_shared_state_provider::<AppState>(cx, || AppState::default());
     let app_state = use_shared_state::<AppState>(cx).unwrap();
     cx.render(rsx! (
         div {
@@ -103,14 +103,67 @@ fn recursive_obj_search(
         }
     }
 }
+
+async fn post_json(
+    key:String,
+    endpoint:String,
+    json:String,
+    ) {
+        log::error!("{}",endpoint);
+    let _ = reqwest::Client::new()
+        .post(endpoint)
+        .header("Authorization",format!("Bearer {}",key))
+        .header("Content-Type","application/json")
+        .body(json)
+    .send()
+    .await
+    .unwrap();
+}
+
+
 fn BuildJsonStructure(cx:Scope) -> Element {
     let map = use_shared_state::<serde_json::Map<String,serde_json::Value>>(cx).unwrap();
     let mut add_list = vec![];
     let mut path = vec![];
+    let endpoint = use_state(cx, || "".to_string());
+    let endpoint_key = use_state(cx, || "".to_string());
     recursive_obj_search(&mut map.read().iter(),&mut add_list,path);
     cx.render(rsx!{
         p{
             "{serde_json::to_string(&*map.read().get(\"\").unwrap()).unwrap()}"
+        }
+        div{
+            div {
+                span{
+                    "endpoint"
+                }
+                input{
+                    oninput: move |evt| {
+                        endpoint.set(evt.value.clone())
+                    },
+                }
+            }
+            
+            div {
+                span{
+                    "endpoint auth"
+                }
+                input{
+                    oninput: move |evt| {
+                        endpoint_key.set(evt.value.clone())
+                    },
+                }
+            }
+            button{
+                onclick:move |_| {
+                    post_json(
+                        endpoint_key.current().as_ref().clone(),
+                        endpoint.current().as_ref().clone(),
+                        serde_json::to_string(&*map.read()).unwrap()
+                    )
+                },
+                "post json"
+            }
         }
         add_list.into_iter()
     })
@@ -120,7 +173,19 @@ fn BuildJsonStructure(cx:Scope) -> Element {
 pub struct BuildJsonObjectProps{
     path:Vec<String>,
 }
-
+fn BuildJsonObject(cx:Scope<BuildJsonObjectProps>) -> Element {
+    let schema = use_state(cx,||"".to_string());
+    cx.render(rsx!{
+        div{
+            p{"Json Schema"}
+            input{
+                oninput: move |evt| schema.set(evt.value.clone()),
+            }
+        }
+        
+    })
+}
+/* 
 fn BuildJsonObject(cx:Scope<BuildJsonObjectProps>) -> Element {
     use serde_json::Value;
     let map = use_shared_state::<serde_json::Map<String,Value>>(cx).unwrap();
@@ -179,7 +244,7 @@ fn BuildJsonObject(cx:Scope<BuildJsonObjectProps>) -> Element {
                     "array-bool" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|Value::Bool(s.parse::<bool>().unwrap_or_default())).collect::<Vec<Value>>()),
                     "array-number" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|
                         Value::Number(serde_json::Number::from_f64(s.parse::<f64>().unwrap_or_default()).unwrap()
-                        )).collect::<Vec<serde_json::Value>>()),
+                    )).collect::<Vec<serde_json::Value>>()),
                     "array-string" => serde_json::Value::Array(with.current().as_ref().clone().split(",").map(|s|Value::String(s.to_string())).collect::<Vec<Value>>()),
                     "object" => serde_json::Value::Object(serde_json::Map::<String,serde_json::Value>::default()),
                     _ => panic!("unexpected value for value"),
@@ -202,7 +267,7 @@ fn BuildJsonObject(cx:Scope<BuildJsonObjectProps>) -> Element {
         }
         }
     )
-}
+}*/
 
 fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
     let keys = use_shared_state::<ApiKeys>(cx).unwrap();
@@ -234,7 +299,6 @@ fn ApiKey(cx:Scope<ApiKeyProps>) -> Element {
                 "Set"
             }
             }
-
         }
     )
 }
@@ -479,7 +543,6 @@ fn ChatGpt(cx:Scope) -> Element {
                 choices:(*model_resp.read()).message_choices.clone()
             })
         }
-
        }
         }
     )
@@ -506,7 +569,6 @@ fn MessageChoices(cx:Scope<MessageChoicesProps>) -> Element {
                     for p in path.current().split(".") {
                         let new_temp = temp.get_mut(p).unwrap();
                         if new_temp.is_string() {
-                            log::error!("is string");
                             *new_temp = Value::String(choice.message.content.clone());
                             break;
                         }
